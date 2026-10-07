@@ -76,7 +76,9 @@ bool HttpRequest::TryContentLength(size_t *length) const {
     const std::string value = GetHeader("Content-Length");
     if (value.empty()) return false;
     for (unsigned char c : value) {
-        if (c < '0' || c > '9' || *length > (std::numeric_limits<size_t>::max() - (c - '0')) / 10)//计算最后一位时，不能超过size_t最大值的最后一位
+        // 非数字或下一次乘 10、加数字会溢出时，拒绝整个字段。
+        if (c < '0' || c > '9' || *length > (std::numeric_limits<size_t>::max() - (c - '0')) / 10)
+            return false;
         *length = *length * 10 + c - '0';
     }
     return true;
