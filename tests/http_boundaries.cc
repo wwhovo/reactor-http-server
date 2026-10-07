@@ -1,4 +1,5 @@
 #include "../source/http/HttpContext.hpp"
+#include "../source/http/Util.hpp"
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -17,6 +18,9 @@ static void Bad(const std::string &wire, int status, size_t max_body = 8388608) 
 }
 int main() {
     try {
+        Check(Util::ValidPath("/assets/../index.html"), "in-root parent traversal");
+        Check(!Util::ValidPath("/./../outside.txt"), "dot must not increase path depth");
+        Check(!Util::ValidPath("/assets/./../../outside.txt"), "nested escape must be rejected");
         HttpRequest request;
         size_t parsed = 123;
         Check(request.TryContentLength(&parsed) && parsed == 0, "missing length is zero");

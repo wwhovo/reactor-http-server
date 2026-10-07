@@ -2,6 +2,8 @@
 #include "Util.hpp"
 #include "../base/Logging.hpp"
 #include <cassert>
+#include <cstdlib>
+#include <limits.h>
 #include <sstream>
 
 // 阅读主线：构造函数注册回调 → OnConnected 建上下文 → OnMessage 驱动解析。
@@ -82,38 +84,43 @@ bool HttpServer::IsFileHandler(const HttpRequest &req) {
     if (req._method != "GET" && req._method != "HEAD") {
         return false;
     }
-    // 3. 使用当前字符串级路径检查，试图拒绝向根目录外跳出的 ..。
-    // 注意：ValidPath 对 . 的处理不完整，stat 也会跟随符号链接，不能当成安全沙箱。
-    if (Util::ValidPath(req._path) == false) {
+    std::string path;
+    return ResolveFilePath(req, &path);
+}
+
+bool HttpServer::ResolveFilePath(const HttpRequest &req, std::string *path) {
+    if (_basedir.empty() || req._path.empty() || req._path.front() != '/' ||
+        !Util::ValidPath(req._path)) return false;
+    std::string candidate = _basedir + req._path;
+    if (req._path.back() == '/') candidate += "index.html";
+
+    // realpath 展开 .、.. 和符号链接；前缀必须含目录分隔符，防止 wwwroot-extra 绕过。
+    char root_path[PATH_MAX], file_path[PATH_MAX];
+    if (!realpath(_basedir.c_str(), root_path) || !realpath(candidate.c_str(), file_path))
         return false;
-    }
-    // 4. 拼出磁盘路径：例如 /image/a.png → ./wwwroot/image/a.png。
-    // 用局部副本，不改变用于动态路由的 req._path；尾部为 / 时补 index.html。
-    std::string req_path = _basedir + req._path;//为了避免直接修改请求的资源路径，因此定义一个临时对象
-    if (!req._path.empty() && req._path.back() == '/')  {
-        req_path += "index.html";
-    }
-    // 通过 stat 判断是否为普通文件，不把目录、管道等当成页面读取。
-    if (Util::IsRegular(req_path) == false) {
-        return false;
-    }
+    const std::string root(root_path), file(file_path);
+    if (root != "/" && file.compare(0, root.size() + 1, root + "/") != 0) return false;
+    if (!Util::IsRegular(file)) return false;
+    *path = file;
     return true;
 }
 
 // 普通静态响应：在连接 loop 中整份 ReadFile 到内存，不是 M2 的流式下载。
 // 由 Route 在 IsFileHandler 通过后调用；有效请求路径非空，才能访问 back()。
 void HttpServer::FileHandler(const HttpRequest &req, HttpResponse *rsp) {
-    // 使用与 IsFileHandler 一致的路径规则，否则“检查的文件”和“读的文件”会不同。
-    std::string req_path = _basedir + req._path;
-    if (req._path.back() == '/')  {
-        req_path += "index.html";
+    std::string req_path;
+    if (!ResolveFilePath(req, &req_path)) {
+        *rsp = HttpResponse(404);
+        ErrorHandler(req, rsp);
+        return;
     }
     // &rsp->_body 是输出字符串的地址，ReadFile 会修改响应正文。
     // 对大文件，这条同步整文件路径会占内存并阻塞 loop，产物下载另用线程池。
     bool ret = Util::ReadFile(req_path, &rsp->_body);
     if (ret == false) {
-        // 现有行为：只返回，未把状态改为 404/500；之前 stat 成功不保证读取成功。
-        // 这里只解释该限制，不改变错误处理逻辑。
+        // stat 成功不保证能够读取；丢弃部分正文，不能伪装成空的 200 成功响应。
+        *rsp = HttpResponse(500);
+        ErrorHandler(req, rsp);
         return;
     }
     // 按后缀推测 MIME，未知后缀兜底为 application/octet-stream。

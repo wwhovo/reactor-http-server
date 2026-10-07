@@ -23,24 +23,15 @@ void Login(const HttpRequest &req, HttpResponse *rsp)
 {
     rsp->SetContent(RequestStr(req), "text/plain");
 }
-void PutFile(const HttpRequest &req, HttpResponse *rsp) 
-{
-    std::string pathname = WWWROOT + req._path;
-    Util::WriteFile(pathname, req._body);
-}
-void DelFile(const HttpRequest &req, HttpResponse *rsp) 
-{
-    rsp->SetContent(RequestStr(req), "text/plain");
-}
 int main()
 {
-    HttpServer server(8085);
+    // 默认只提供本机演示，避免无认证服务被所有网卡访问。
+    HttpServer server(8085, DEFALT_TIMEOUT, "127.0.0.1");
     server.SetThreadCount(3);
+    server.EnableSignalStop(); // 在工作线程启动前统一接收 SIGINT/SIGTERM，正常回收资源。
     server.SetBaseDir(WWWROOT);//设置静态资源根目录，告诉服务器有静态资源请求到来，需要到哪里去找资源文件
     server.Get("/hello", Hello);
     server.Post("/login", Login);
-    server.Put("/1234.txt", PutFile);
-    server.Delete("/1234.txt", DelFile);
     server.Listen();
     return 0;
 }

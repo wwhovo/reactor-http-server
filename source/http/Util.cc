@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <fstream>
 #include <sys/stat.h>
+#include <utility>
 
 std::unordered_map<int, std::string> _statu_msg = {
     {100,  "Continue"},
@@ -170,17 +171,20 @@ bool Util::ReadFile(const std::string &filename, std::string *buf) {
         printf("OPEN %s FILE FAILED!!", filename.c_str());
         return false;
     }
-    size_t fsize = 0;
     ifs.seekg(0, ifs.end);//跳转读写位置到末尾
-    fsize = ifs.tellg();  //获取当前读写位置相对于起始位置的偏移量，从末尾偏移刚好就是文件大小
+    const std::streampos end = ifs.tellg();
+    if (end < 0) return false; // 查询失败不能转换成巨大的无符号长度。
     ifs.seekg(0, ifs.beg);//跳转到起始位置
-    buf->resize(fsize); //开辟文件大小的空间
-    ifs.read(&(*buf)[0], fsize);
+    if (!ifs.good()) return false;
+    std::string content(static_cast<size_t>(end), '\0');
+    // 空文件无需取可写首字符；读取成功后才替换调用者的输出。
+    if (!content.empty()) ifs.read(&content[0], static_cast<std::streamsize>(content.size()));
     if (ifs.good() == false) {
         printf("READ %s FILE FAILED!!", filename.c_str());
         ifs.close();
         return false;
     }
+    *buf = std::move(content);
     ifs.close();
     return true;
 }
@@ -303,6 +307,7 @@ bool Util::ValidPath(const std::string &path) {
     Split(path, "/", &subdir);
     int level = 0;
     for (auto &dir : subdir) {
+        if (dir == ".") continue; // . 不增加深度，否则 /./../file 能绕过根边界。
         if (dir == "..") {
             level--; //任意一层走出相对根目录，就认为有问题
             if (level < 0) return false;

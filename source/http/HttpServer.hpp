@@ -55,6 +55,9 @@ class HttpServer {
         void WriteReponse(const PtrConnection &conn, const HttpRequest &req, HttpResponse &rsp);
         // 检查是否适用普通静态文件入口：配置根目录、GET/HEAD、路径检查、普通文件。
         bool IsFileHandler(const HttpRequest &req);
+        // 解析真实磁盘路径，检查静态根目录边界；检查与读取共同使用该规则。
+        // 这是受控静态目录的边界检查，不替代基于目录 fd 的竞态安全沙箱。
+        bool ResolveFilePath(const HttpRequest &req, std::string *path);
         // 静态文件整份读取到 rsp->_body，再设置 MIME；不是产物服务的大文件流式路径。
         void FileHandler(const HttpRequest &req, HttpResponse *rsp);
         // 遍历选中的路由表，填 req._matches 并调用首个匹配回调，无匹配则 404。
