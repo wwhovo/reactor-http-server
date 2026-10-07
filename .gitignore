@@ -1,0 +1,12 @@
+build*/
+__pycache__/
+*.pyc
+artifact-data/
+.env
+.env.*
+!.env.example
+
+# 本地文档、历史迁移工具及旧客户端示例不纳入展示版本。
+/docs/
+/tools/
+/test/
