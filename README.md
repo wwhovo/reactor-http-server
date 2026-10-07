@@ -63,7 +63,7 @@ cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-debug -j2
 ```
 
-HTTP 服务默认端口为 8085，配置 3 个工作线程。静态资源使用相对目录 `./wwwroot/`，因此从以下目录启动：
+HTTP 服务默认监听 `127.0.0.1:8085`，配置 3 个工作线程。静态资源使用相对目录 `./wwwroot/`，因此从以下目录启动：
 
 ```sh
 cd source/http
@@ -74,12 +74,15 @@ cd source/http
 
 ```sh
 curl -i 'http://127.0.0.1:8085/hello?name=alice'
+curl -i -d 'x=1' http://127.0.0.1:8085/login
 curl -i http://127.0.0.1:8085/index.html
 curl -I http://127.0.0.1:8085/index.html
 curl -i http://127.0.0.1:8085/not-found
 ```
 
-`/hello` 返回请求信息的文本表示，`/index.html` 返回静态页面，未匹配路径返回 404。HEAD 发送响应头但不发送正文，保留对应 GET 内容长度。
+`/hello` 与 POST `/login` 返回请求信息的文本表示，后者不是账号认证接口；`/index.html` 返回静态页面，未匹配路径返回 404。HEAD 发送响应头但不发送正文，保留对应 GET 内容长度。
+
+使用 Ctrl+C 或 SIGTERM 正常停止 HTTP 服务并回收工作线程。默认配置只允许本机访问；若修改监听地址进行网络演示，应另行评估访问控制和传输安全。
 
 TCP 回显服务从仓库根目录用 `./build-debug/echo_server` 启动，默认端口 8500。
 
@@ -89,28 +92,32 @@ TCP 回显服务从仓库根目录用 `./build-debug/echo_server` 启动，默�
 ctest --test-dir build-debug --output-on-failure
 ```
 
-用例涉及多翻译单元链接、HTTP 分段解析与流水线请求、非法报文、网络半关闭、重复释放、RST、停机与基础端到端请求。用例的存在不代表当前版本全部通过。
+用例涉及多翻译单元链接、正文长度与溢出、HTTP 分段解析与流水线请求、非法报文、HEAD、长连接、静态文件路径/读取错误，以及网络半关闭、重复释放、RST 与停机。
 
 已记录的 Debug 验证结果（2026-10-07）：
 
-| 结果 | 测试 |
+| 构建配置 | 结果 |
 | --- | --- |
-| 通过 | `network_components`、`network_integration`、`echo_smoke` |
-| 待修复 | `http_components`、`http_boundaries`、`http_smoke` |
+| Debug | 六项全部通过，连续两轮 |
+| Release | 六项全部通过 |
+| Debug + ASan/UBSan | 六项全部通过，已执行用例未报告检查器错误 |
 
-当前为 **3/6 通过**：`HttpRequest::TryContentLength` 的非法字符/溢出判断缺少失败返回，导致正文长度解析异常。该问题影响 POST 正文及相关边界检查，尚未修复。
+六项为 `http_components`、`network_components`、`network_integration`、`http_boundaries`、`echo_smoke`、`http_smoke`。测试串行执行，端到端用例会使用本机 8085 和 8500 端口，请确保端口未被其他服务占用。权限拒绝用例在 root 用户下会跳过，本次以普通用户执行。
 
-项目提供 ASan/UBSan 构建选项；以下是检查命令，不代表当前版本已通过检查：
+ASan/UBSan 检查命令：
 
 ```sh
 cmake -S . -B build-sanitize -DCMAKE_BUILD_TYPE=Debug -DENABLE_SANITIZERS=ON
 cmake --build build-sanitize -j2
-ctest --test-dir build-sanitize --output-on-failure
+ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  ctest --test-dir build-sanitize --output-on-failure
 ```
+
+检查结论只覆盖已执行用例，不是长期稳定性或生产可用性证明。Echo 示例在 smoke 结束时直接终止，不能据此声称验证了它的正常退出泄漏检查。
 
 ## 实现边界
 
 - HTTP 为协议子集：支持 HTTP/1.0、HTTP/1.1 的当前请求处理路径及 GET、HEAD、POST、PUT、DELETE 路由；不提供 TLS 或 Transfer-Encoding 解析，特殊状态码响应处理仍需完善。
-- 静态文件整份同步读取，可能阻塞连接所属 loop；路径检查不是完整安全沙箱，文件读取失败时的响应状态也待完善。
-- `/login` 仅为请求信息回显，不提供账号认证；PUT/DELETE 示例不构成完整文件管理接口。默认监听全部 IPv4 网卡，仅应在受控环境运行，不直接暴露到不可信网络。
+- 静态文件整份同步读取，可能阻塞连接所属 loop 并占用较多内存。真实路径检查会拒绝根目录外的符号链接目标，但检查与打开之间仍存在竞态，不构成完整安全沙箱；静态目录应受控且不允许不可信用户修改。读取失败返回 500。
+- 演示入口未注册 PUT/DELETE 处理器，不提供文件管理或认证功能；框架保留相应方法的路由注册接口。当前仅适用于受控演示，不直接暴露到不可信网络。
 - 尚未完成可复现性能测试，不提供未经测量的 QPS、延迟或并发能力结论。
